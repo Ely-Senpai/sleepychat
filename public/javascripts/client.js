@@ -1,4 +1,4 @@
-var socket = io();
+var socket = null;
 var loggedIn = true;
 var lastChat = "";
 var chatting = false;
@@ -13,12 +13,20 @@ var newchatclickedonce = false;
 var bigchat = false;
 var sound = true;
 var lastMessenger = "";
+var denied = false;
 
-$(document).ready(function()
+var date = new Date();
+var timeSinceLastMessage = Date.now();
+var isAFK = false;
+
+//For Autocomplete
+var users = [];
+
+
+$.getScript('/javascripts/tabcomplete.js', function()
 {
-	$('#login-modal').modal({keyboard: false, backdrop: 'static'});
 	$('#randomnick').click();
-	var socket = io();
+	var socket = io("/", { reconnection: false });
 
 	$('#loginform').submit(function()
 	{
@@ -41,6 +49,11 @@ $(document).ready(function()
 
 	socket.on('connect', function()
 	{
+		socket.on('allow', function()
+		{
+			$('#login-modal').modal({keyboard: false, backdrop: 'static'});
+		});
+		
 		var ignore_list = new Array()
 		$('#loginsubmit').prop('disabled', false).removeClass('btn-default').addClass('btn-success').text('Start Matchmaking!');
 		$('#bigchatsubmit').prop('disabled', false).removeClass('btn-default').addClass('btn-primary').text('Or join the big group chat!');
@@ -77,6 +90,8 @@ $(document).ready(function()
 				var type = 'either';
 
 			socket.emit('login', { nick: nick, gender: gender, role: role, chatwith: chatwith, type: type });
+			
+			timeSinceLastMessage = Date.now();
 			$('#login-modal').modal('hide');
 			return false;
 		});
@@ -120,8 +135,16 @@ $(document).ready(function()
 			nick = nick2;
 
 			socket.emit('login', { nick: nick2, gender: gender, role: role, chatwith: chatwith, type: type, inBigChat: true });
+			
+
 			$('#login-modal').modal('hide');
 			return false;
+		});
+		
+		socket.on('rosterupdate', function(newList)
+		{
+			users = newList;
+			$('#m').tabcomplete(users);
 		});
 		
 		socket.on('nickupdate', function(newnick)
@@ -138,102 +161,108 @@ $(document).ready(function()
 		
 		socket.on('whisper', function(sender, msg)
 		{
-			if(notify)
-			{
-				newTitle = "*** " + sender + " messaged you! ***";
-				clearInterval(interval);
-				interval = setInterval(changeTitle, 1000);
-			}
-			
-			console.log(sender);
-			console.log(sender.length);
-			
-			scroll_down = false;
-			if ($(window).scrollTop() + $(window).height() + 50 >= $('body,html')[0].scrollHeight)
-			{
-				scroll_down = true;
-			}
-			if(sender !== nick)
-			{
-				lastMessenger = sender;
-		
-				$('#messages').append($('<li>').html(moment().format('h:mm:ss a') + ": *" + sender + " whispers: " + msg.substring(6 + msg.split(' ')[1].length) + "*"));
-				$('#messages > li').filter(':last').addClass('highlight');
-			}
-			else
-			{
-				$('#messages').append($('<li>').html(moment().format('h:mm:ss a') + ": *You whisper: " + msg.substring(6 + msg.split(' ')[1].length) + "*"));
-				$('#messages > li').filter(':last').addClass('self');
-			}
-			
-			scrollDown(scroll_down);
-		});
-
-		socket.on('chat message', function(msg, who)
-		{
-			if(notify)
-			{
-				if(sound)
-					snd.play();
-				if(bigchat)
-					newTitle = "*** People are talking! ***";
-				else
-					newTitle = "*** " + lastChat + " messaged you! ***";
-				clearInterval(interval);
-				interval = setInterval(changeTitle, 1000);
-			}
-
-			scroll_down = false;
-			if ($(window).scrollTop() + $(window).height() + 50 >= $('body,html')[0].scrollHeight)
-			{
-				scroll_down = true;
-			}
-
-			$('#messages').append($('<li>').html(moment().format('h:mm:ss a') + ": " + msg));
-			var user = msg.match(/&lt;(.+)&gt;/);
-			if(who === "me")
-			{
-				$('#messages > li').filter(':last').addClass('self');
-			}
-			else if(who === "eval" && msg.lastIndexOf('&lt;' + nick + '&gt;', 0) === 0)
-			{
-				$('#messages > li').filter(':last').addClass('self');
-			}
-			
-			try
-			{
-				if(bigchat && msg.split('&gt;')[1].substring(1).indexOf(nick) != -1)
+			if (msg){
+				if(notify)
 				{
+					newTitle = "*** " + sender + " messaged you! ***";
+					clearInterval(interval);
+					interval = setInterval(changeTitle, 1000);
+				}
+				
+				var scroll_down = false;
+				if ($(window).scrollTop() + $(window).height() + 300 >= $('body,html')[0].scrollHeight)
+				{
+					scroll_down = true;
+				}
+				if(sender !== nick)
+				{
+					lastMessenger = sender;
+			
+					$('#messages').append($('<li>').html(moment().format('h:mm:ss a') + ": *" + sender + " whispers: " + msg.substring(6 + msg.split(' ')[1].length) + "*"));
 					$('#messages > li').filter(':last').addClass('highlight');
 				}
+				else
+				{
+					$('#messages').append($('<li>').html(moment().format('h:mm:ss a') + ": *You whisper: " + msg.substring(6 + msg.split(' ')[1].length) + "*"));
+					$('#messages > li').filter(':last').addClass('self');
+				}
+				
+				scrollDown(scroll_down);
 			}
-			catch(e) {}
-			
-			if (user && ignore_list.indexOf(user[1]) != -1)
-			{
-				$('#messages > li').filter(':last').hide();
-			}
-
-			scrollDown(scroll_down);
 		});
 
-		socket.on('information', function(msg)
+		socket.on('chat message', function(msg, who, userFrom)
 		{
-			if(notify)
+			if(msg)
 			{
-				if(sound)
-					snd.play();
-				newTitle = "*** New message! ***";
-				clearInterval(interval);
-				interval = setInterval(changeTitle, 1000);
+				if(notify)
+				{
+					if(sound)
+						snd.play();
+					if(bigchat)
+						newTitle = "*** People are talking! ***";
+					else
+						newTitle = "*** " + lastChat + " messaged you! ***";
+					clearInterval(interval);
+					interval = setInterval(changeTitle, 1000);
+				}
+
+				var scroll_down = false;
+				if ($(window).scrollTop() + $(window).height() + 300 >= $('body,html')[0].scrollHeight)
+				{
+					scroll_down = true;
+				}
+
+				$('#messages').append($('<li>').html(moment().format('h:mm:ss a') + ": " + msg));
+				var user = msg.match(/&lt;(.+)&gt;/);
+				if(who === "me")
+				{
+					$('#messages > li').filter(':last').addClass('self');
+				}
+				else if(who === "eval" && msg.lastIndexOf('&lt;' + nick + '&gt;', 0) === 0)
+				{
+					$('#messages > li').filter(':last').addClass('self');
+				}
+				
+				try
+				{
+					if(bigchat && msg.split('&gt;')[1].substring(1).indexOf(nick) != -1)
+					{
+						$('#messages > li').filter(':last').addClass('highlight');
+					}
+				}
+				catch(e) {}
+				
+				if (userFrom && ignore_list.indexOf(userFrom) != -1)
+				{
+					$('#messages > li').filter(':last').hide();
+				}
 			}
-			scroll_down = false;
-			if ($(window).scrollTop() + $(window).height() + 50 >= $('body,html')[0].scrollHeight)
+		});
+		socket.on('information', function(msg, userFrom)
+		{
+			if (msg)
 			{
-				scroll_down = true;
+				if(notify)
+				{
+					if(sound)
+						snd.play();
+					newTitle = "*** New message! ***";
+					clearInterval(interval);
+					interval = setInterval(changeTitle, 1000);
+				}
+				var scroll_down = false;
+				if ($(window).scrollTop() + $(window).height() + 300 >= $('body,html')[0].scrollHeight)
+				{
+					scroll_down = true;
+				}
+				if (!(userFrom && ignore_list.indexOf(userFrom) != -1))
+				{
+					$('#messages').append($('<li>').html(moment().format('h:mm:ss a') + ": <span class=\"information\">" + msg + "</span>"));
+					scrollDown(scroll_down);
+				}
+
 			}
-			$('#messages').append($('<li>').html(moment().format('h:mm:ss a') + ": <span class=\"information\">" + msg + "</span>"));
-			scrollDown(scroll_down);
 		});
 
 		socket.on('ignore', function(user)
@@ -246,13 +275,19 @@ $(document).ready(function()
 			chatting = false;
 			$('#sendbutton').attr('disabled', true);
 			var themsg = '[INFO] ' + nick + ' has disconnected from you.';
-			scroll_down = false;
-			if ($(window).scrollTop() + $(window).height() + 50 >= $('body,html')[0].scrollHeight)
+			var scroll_down = false;
+			if ($(window).scrollTop() + $(window).height() + 300 >= $('body,html')[0].scrollHeight)
 			{
 				scroll_down = true;
 			}
 			$('#messages').append($('<li>').html(moment().format('h:mm:ss a') + ": <span class=\"information\">" + themsg + "</span>"));
 			scrollDown(scroll_down);
+		});
+		
+		socket.on('denial', function()
+		{
+			denied = true;
+			$('#messages').append($('<li>').html(moment().format('h:mm:ss a') + ":  <span class=\"information\">" + "[INFO] Your connection was refused. There are too many users with your IP address at this time.</span>"));
 		});
 
 		socket.on('disconnect', function()
@@ -265,12 +300,15 @@ $(document).ready(function()
 				clearInterval(interval);
 				interval = setInterval(changeTitle, 1000);
 			}
-			scroll_down = false;
-			if ($(window).scrollTop() + $(window).height() + 50 >= $('body,html')[0].scrollHeight)
+			var scroll_down = false;
+			if ($(window).scrollTop() + $(window).height() + 300 >= $('body,html')[0].scrollHeight)
 			{
 				scroll_down = true;
 			}
-			$('#messages').append($('<li>').html(moment().format('h:mm:ss a') + ":  <span class=\"information\">" + "[INFO] Sorry! You seem to have been disconnected from the server. Please reload the page and try again.</span>"));
+			if (!denied)
+			{
+				$('#messages').append($('<li>').html(moment().format('h:mm:ss a') + ":  <span class=\"information\">" + "[INFO] Sorry! You seem to have been disconnected from the server. Please reload the page and try again.</span>"));
+			}
 			scrollDown(scroll_down);
 		});
 	});
@@ -278,6 +316,7 @@ $(document).ready(function()
 	socket.on('loggedIn', function()
 	{
 		loggedIn = true;
+		timeSinceLastMessage = Date.now();
 		if(bigchat)
 		{
 			$('#dcbutton').parent().hide();
@@ -295,7 +334,10 @@ $(document).ready(function()
 					}
 				}
 				socket.emit('chat message', { message: msgInBox });
+				timeSinceLastMessage = Date.now();
 				$('#m').val('');
+				$('#mhint').val('');
+				scrollDown(($(window).scrollTop() + $(window).height() + 300 >= $('body,html')[0].scrollHeight));
 				return false;
 			});
 		}
@@ -306,6 +348,7 @@ $(document).ready(function()
 				return false;
 			});
 			socket.emit('getNewChat', { first: true });
+
 		}
 	});
 
@@ -328,8 +371,8 @@ $(document).ready(function()
 				if(chatting)
 				{
 					var msg = "[INFO] You have disconnected from " + lastChat + ".";
-					scroll_down = false;
-					if ($(window).scrollTop() + $(window).height() + 50 >= $('body,html')[0].scrollHeight)
+					var scroll_down = false;
+					if ($(window).scrollTop() + $(window).height() + 300 >= $('body,html')[0].scrollHeight)
 					{
 						scroll_down = true;
 					}
@@ -344,9 +387,9 @@ $(document).ready(function()
 				newchatclickedonce = true;
 				setTimeout(function ()
 				{
-              		$('#dcbutton').button('reset');
+					$('#dcbutton').button('reset');
 					newchatclickedonce = false;
-            	}, 3000);
+				}, 3000);
 			}
 		});
 		$('#chatbar').unbind('submit');
@@ -362,7 +405,10 @@ $(document).ready(function()
 				}
 			}
 			socket.emit('chat message', { message: msgInBox });
+			timeSinceLastMessage = Date.now();
 			$('#m').val('');
+			$('#mhint').val('');
+			scrollDown(($(window).scrollTop() + $(window).height() + 300 >= $('body,html')[0].scrollHeight));
 			return false;
 		});
 	});
@@ -375,7 +421,7 @@ $(document).ready(function()
 		$('#iamtist').parent().html('<input name="iamrole" id="iamtist" type="radio"> ' + "Hypnotist (" + stats.role.tist + ")");
 		$('#iamsub').parent().html('<input name="iamrole" id="iamsub" type="radio"> ' + "Subject (" + stats.role.sub + ")");
 		$('#iamswitch').parent().html('<input name="iamrole" id="iamswitch" type="radio"> ' + "Switch (" + stats.role.switchrole + ")");
-		$('#bigchatsubmit').html('or join the big group chat! (' + stats.bigroom + ")");
+		$('#bigchatsubmit').html('Or join the ' + randomAdjective() + ' public chat! (' + stats.bigroom + ")");
 	});
 
 	$(window).blur(function()
@@ -386,10 +432,102 @@ $(document).ready(function()
 	$(window).focus(function()
 	{
 		notify = false;
-    	clearInterval(interval);
-    	$("title").text(oldTitle);
+		clearInterval(interval);
+		$("title").text(oldTitle);
+	});
+
+	var afkTime = 7*60*1000; // 7 minutes in milliseconds
+
+	var afk = setInterval(function(){
+		if(bigchat)
+		{
+			timenow = Date.now()
+			if ((!isAFK) && (timenow - timeSinceLastMessage > afkTime)) // If we're not AFK, but we haven't said anything in 2 seconds, then mark ourselves as afk
+		    {
+		    	socket.emit('AFK', {isAFK: true, nick: nick, time: timenow - timeSinceLastMessage, inPrivate: false})
+		    	isAFK = true;
+		    }
+		    else if(isAFK && (timenow - timeSinceLastMessage <= afkTime)) // If we're AFK, but we have said something in the last 2 seconds, then mark ourselves as not afk
+		    {
+		    	socket.emit('AFK', {isAFK: false, nick: nick, time: timenow - timeSinceLastMessage, inPrivate: false})
+		    	isAFK = false;
+		    }
+		}
+
+	}, 250);
+	socket.on('afk', function(nick)
+	{
+		if(bigchat)
+			timeSinceLastMessage = Date.now() - (afkTime+1000) // simulate the user not having typed something for 8 seconds
+	});
+
+	//binaural beat setup
+	var playing = false;
+	var prevBeat = null;
+
+	socket.on('binaural', function(BBeat)
+	{
+		if(!BBeat)
+			var BBeat = 7;
+			var prevBeat = 7; // If they just did /binaural we want to stop the binaurals if they're playing
+		var frequency = 65;
+
+		var leftear = (BBeat / 2) + frequency;
+		var rightear = frequency - (BBeat / 2);
+		if (playing && (prevBeat == BBeat))
+		{
+			stop();
+			playing = false;
+		}
+		else
+		{
+			stop();
+			SetupBeat(leftear,rightear);
+			PlayBeat(BBeat,frequency);
+			prevBeat = BBeat
+			playing = true;
+		}
 	});
 });
+
+var audiolet = new Audiolet();
+var out = audiolet.output;
+var sine1,sine2,pan1,pan2,gain;
+
+var SetupBeat = function(leftear,rightear){
+	sine1 = new Sine(audiolet, leftear);
+	sine2 = new Sine(audiolet, rightear);
+	pan1 = new Pan(audiolet, 1);
+	pan2 = new Pan(audiolet, 2); 
+	gain = new Gain(audiolet, 0.5)
+	sine1.connect(pan1);
+	sine2.connect(pan2);
+}
+
+var PlayBeat = function(beat,frequency){
+	beat = parseFloat(beat);
+	frequency = parseFloat(frequency);
+	var beat = beat / 2;
+	var leftear = beat + frequency;
+	var rightear = frequency - beat;
+	stop();
+	SetupBeat(leftear,rightear);
+	start();
+}
+
+var start = function(){
+	pan1.connect(gain);
+	pan2.connect(gain);
+	gain.connect(out);
+}
+
+var stop = function(){
+	try
+	{
+		gain.disconnect(out);
+	} catch (e) {}
+}
+
 
 function scrollDown(scroll_down)
 {
@@ -402,14 +540,19 @@ function scrollDown(scroll_down)
 window.onbeforeunload = confirmExit;
 function confirmExit()
 {
-    if (chatting || bigchat)
-        return "Wait, you're still in a chat session!";
+	if (chatting || bigchat)
+		return "Wait, you're still in a chat session!";
 }
 
 function changeTitle()
 {
-    document.title = isOldTitle ? oldTitle : newTitle;
-    isOldTitle = !isOldTitle;
+	document.title = isOldTitle ? oldTitle : newTitle;
+	isOldTitle = !isOldTitle;
+}
+
+function randomAdjective(){
+	var adjs = ['adaptable', 'adventurous', 'affable', 'affectionate', 'agreeable', 'ambitious', 'amiable', 'amicable', 'amusing', 'brave', 'bright', 'broad-minded', 'calm', 'charming', 'communicative', 'compassionate ', 'conscientious', 'considerate', 'convivial', 'courageous', 'courteous', 'creative', 'decisive', 'determined', 'diligent', 'diplomatic', 'discreet', 'dynamic', 'easygoing', 'emotional', 'energetic', 'enthusiastic', 'exuberant', 'fair-minded', 'faithful', 'fearless', 'forceful', 'frank', 'friendly', 'funny', 'generous', 'gentle', 'good', 'gregarious', 'hard-working', 'helpful', 'honest', 'humorous', 'imaginative', 'impartial', 'independent', 'intellectual', 'intelligent', 'intuitive', 'inventive', 'kind', 'loving', 'loyal', 'modest', 'neat', 'nice', 'optimistic', 'passionate', 'patient', 'persistent ', 'pioneering', 'philosophical', 'placid', 'plucky', 'polite', 'powerful', 'practical', 'pro-active', 'quick-witted', 'quiet', 'rational', 'reliable', 'reserved', 'resourceful', 'romantic', 'self-confident', 'sensible', 'sensitive', 'sociable', 'straightforward', 'thoughtful', 'unassuming', 'understanding', 'versatile', 'warmhearted', 'willing', 'witty', 'mysterious', 'incredible', 'amazing', 'stupefying', 'unbelieveable', 'mind-blowing'];
+	return adjs[Math.floor(Math.random()*adjs.length)]
 }
 
 $("#bugsandfeatures").click(function()
